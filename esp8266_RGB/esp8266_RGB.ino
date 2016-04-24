@@ -10,7 +10,7 @@
 #define BLUE_PIN 12
 #define RED_PIN 14
 #define GREEN_PIN 13
-
+ 
 const char* HOSTNAME = "ESP-RGB-SOFA";
 #define PASSWORD "OMFG@@"
 
@@ -33,30 +33,20 @@ PubSubClient client(espClient);
 
 MDNSResponder mdns;
 
-struct
-RGB
-{
-        int r;
-        int g;
-        int b;
-};
+int brightness = 100;
+int red = 0;
+int blue = 0;
+int green = 0;
 
-
-RGB color_converter (int hexValue)
-{
- struct RGB rgbColor;
- rgbColor.r = ((hexValue >> 16) & 0xFF) / 255.0; // Extract the RR byte
- rgbColor.g = ((hexValue >> 8) & 0xFF) / 255.0; // Extract the GG byte
- rgbColor.b = ((hexValue) & 0xFF) / 255.0; // Extract the BB byte
- return (rgbColor); 
-};
-
-RGB colors;
-
-void colors_update(RGB *rgb) {
-  analogWrite(RED_PIN, map(rgb->r, 0, 255, 0, 1023));
-  analogWrite(GREEN_PIN, map(rgb->g, 0, 255, 0, 1023));
-  analogWrite(BLUE_PIN, map(rgb->b, 0, 255, 0, 1023));
+String toString(byte* payload, unsigned int length) {
+  int i = 0;
+  char buff[length + 1];
+  for (i = 0; i < length; i++) {
+    buff[i] = payload[i];
+  }
+  buff[i] = '\0';
+  String msg = String(buff);
+  return msg;
 }
 
 void configModeCallback (WiFiManager *myWiFiManager) {
@@ -73,8 +63,8 @@ void reconnect() {
     // Attempt to connect
     if (client.connect(HOSTNAME, mqtt_user, mqtt_pass)) {
       Serial.println("connected");
-      client.subscribe("sensors/test/colors");
-      client.subscribe("sensors/test/brightness");
+      client.subscribe("/home/lights/sofa/color");
+      client.subscribe("/home/lights/sofa/SW1");
       return;
     } else {
       Serial.print("failed, rc=");
@@ -87,23 +77,36 @@ void reconnect() {
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  // handle message arrived
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i=0;i<length;i++) {
-    Serial.print((int)payload[i]-'0');
+  if(strcmp(topic,"/home/lights/sofa/color")==0){
+    String msg = toString(payload, length);
+    Serial.println(msg);
+    int c1 = msg.indexOf(';');
+    int c2 = msg.indexOf(';',c1+1);
+    
+    //int r = map(msg.toInt(),0,100,0,PWM_VALUE);
+    //r = constrain(r,0,PWM_VALUE);
+    int r =  map(msg.toInt(), 0, 100, 0, 1023);
+    
+    //int g = map(msg.substring(c1+1,c2).toInt(),0,100,0,PWM_VALUE);
+    //g = constrain(g, 0, PWM_VALUE);
+     int g =  map(msg.substring(c1+1,c2).toInt(), 0, 100, 0, 1023);
+     
+    //int b = map(msg.substring(c2+1).toInt(),0,100,0,PWM_VALUE);
+    //b = constrain(b,0,PWM_VALUE);
+    int b =  map(msg.substring(c2+1).toInt(), 0, 100, 0, 1023);
+    
+    /*red = gamma_table[r];
+    green = gamma_table[g];
+    blue = gamma_table[b];
+*/
+    Serial.println(r);
+    Serial.println(b);
+    Serial.println(g);
+    analogWrite(RED_PIN, r);
+    analogWrite(GREEN_PIN, g);
+    analogWrite(BLUE_PIN, b);
+    delay(10);
   }
-  Serial.println(" length " + length);
-  
-  if (strcmp(topic,"sensors/test/colors")==0) {
-    colors = color_converter((int)payload);
-    colors_update(&colors);
-    Serial.println(colors.r);
-    Serial.println(colors.g);
-    Serial.println(colors.b);
-  }
-  
 }
 
 void setup() {
@@ -113,6 +116,8 @@ void setup() {
   pinMode(BLUE_PIN, OUTPUT);
   pinMode(GREEN_PIN, OUTPUT);
 
+  analogWriteFreq(200);
+  
   WiFi.hostname(HOSTNAME);
 
   WiFiManager wifiManager;
@@ -123,12 +128,12 @@ void setup() {
   //wifiManager.resetSettings();
 
   // Turn off debug output
-  wifiManager.setDebugOutput(false);
+  wifiManager.setDebugOutput(true);
 
 
   //set minimu quality of signal so it ignores AP's under that quality
   //defaults to 8%
-  wifiManager.setMinimumSignalQuality();
+  //wifiManager.setMinimumSignalQuality();
 
   //sets timeout until configuration portal gets turned off
   //useful to make it all retry or go to sleep
@@ -185,10 +190,12 @@ void setup() {
   ArduinoOTA.begin();
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
-
+  
   analogWrite(BLUE_PIN, 1023);
   analogWrite(RED_PIN, 1023);
   analogWrite(GREEN_PIN, 1023);
+  
+  delay(100);
 }
 
 void loop() {
@@ -200,5 +207,5 @@ void loop() {
       reconnect();
   }
   client.loop();
-  delay(1000);
+  delay(10);
 }
