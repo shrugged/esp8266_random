@@ -7,8 +7,8 @@
 #include <WiFiUdp.h>
 #include <PubSubClient.h>
 
-#define BLUE_PIN 12
-#define RED_PIN 14
+#define BLUE_PIN 14
+#define RED_PIN 12
 #define GREEN_PIN 13
  
 const char* HOSTNAME = "ESP-RGB-SOFA";
@@ -33,7 +33,10 @@ PubSubClient client(espClient);
 
 MDNSResponder mdns;
 
-int brightness = 100;
+// 0 to 1024
+int brightness = 1024;
+// status on by default
+int stats = 1;
 int red = 0;
 int blue = 0;
 int green = 0;
@@ -63,8 +66,9 @@ void reconnect() {
     // Attempt to connect
     if (client.connect(HOSTNAME, mqtt_user, mqtt_pass)) {
       Serial.println("connected");
-      client.subscribe("/home/lights/sofa/color");
-      client.subscribe("/home/lights/sofa/SW1");
+      client.subscribe("home/sofa/rgb1/brightness");
+      client.subscribe("home/sofa/rgb1/switch");
+      client.subscribe("home/sofa/rgb1/colors");
       return;
     } else {
       Serial.print("failed, rc=");
@@ -77,34 +81,44 @@ void reconnect() {
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  if(strcmp(topic,"/home/lights/sofa/color")==0){
+  
+  if(strcmp(topic,"home/sofa/rgb1/colors")==0){
     String msg = toString(payload, length);
-    Serial.println(msg);
-    int c1 = msg.indexOf(';');
-    int c2 = msg.indexOf(';',c1+1);
+    int c1 = msg.indexOf(',');
+    int c2 = msg.indexOf(',',c1+1);
     
-    //int r = map(msg.toInt(),0,100,0,PWM_VALUE);
-    //r = constrain(r,0,PWM_VALUE);
-    int r =  map(msg.toInt(), 0, 100, 0, 1023);
+    int r =  map(msg.toInt(), 0, 255, 0, 1024);
     
-    //int g = map(msg.substring(c1+1,c2).toInt(),0,100,0,PWM_VALUE);
-    //g = constrain(g, 0, PWM_VALUE);
-     int g =  map(msg.substring(c1+1,c2).toInt(), 0, 100, 0, 1023);
+     int g =  map(msg.substring(c1+1,c2).toInt(), 0, 255, 0, 1024);
      
-    //int b = map(msg.substring(c2+1).toInt(),0,100,0,PWM_VALUE);
-    //b = constrain(b,0,PWM_VALUE);
-    int b =  map(msg.substring(c2+1).toInt(), 0, 100, 0, 1023);
+    int b =  map(msg.substring(c2+1).toInt(), 0, 255, 0, 1024);
     
-    /*red = gamma_table[r];
-    green = gamma_table[g];
-    blue = gamma_table[b];
-*/
-    Serial.println(r);
-    Serial.println(b);
-    Serial.println(g);
-    analogWrite(RED_PIN, r);
-    analogWrite(GREEN_PIN, g);
-    analogWrite(BLUE_PIN, b);
+    red = r;
+    green = g;
+    blue = b;
+  } else if (strcmp(topic,"home/sofa/rgb1/brightness")==0) {
+    String msg = toString(payload, length);
+    int b = msg.toInt();
+    brightness = map(b, 0, 255, 0, 1024);
+  } else if (strcmp(topic,"home/sofa/rgb1/switch")==0) {
+    String msg = toString(payload, length);
+    int s = msg.toInt();
+    if(s == 1 ) {
+      stats = 1;
+    } else if (s == 0 ) {
+      stats = 0;
+    }
+  }
+
+  if(stats == 1) {
+    analogWrite(RED_PIN, map(red, 0, 1024, 0, brightness));
+    analogWrite(GREEN_PIN, map(green, 0, 1024, 0, brightness));
+    analogWrite(BLUE_PIN, map(blue, 0, 1024, 0, brightness));
+    delay(10);
+  } else if (stats == 0) {
+    analogWrite(RED_PIN, 0);
+    analogWrite(GREEN_PIN, 0);
+    analogWrite(BLUE_PIN, 0);
     delay(10);
   }
 }
