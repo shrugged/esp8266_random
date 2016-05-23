@@ -6,6 +6,8 @@
 #include <ArduinoOTA.h>
 #include <WiFiUdp.h>
 #include <PubSubClient.h>
+#include <WebSocketsServer.h>   //https://github.com/Links2004/arduinoWebSockets/tree/async
+#include <Hash.h>
 
 #define BLUE_PIN 14
 #define RED_PIN 12
@@ -14,8 +16,9 @@
 const char* HOSTNAME = "ESP-RGB-SOFA";
 #define PASSWORD "OMFG@@"
 
-//#define DEBUGGING(...) Serial.println( __VA_ARGS__ )
-//#define DEBUGGING_L(...) Serial.print( __VA_ARGS__ )
+#define DEBUGGING(...) Serial.println( __VA_ARGS__ )
+#define DEBUGGING_L(...) Serial.print( __VA_ARGS__ )
+#define DEBUGGING_F(...) Serial.printf( __VA_ARGS__ )
 
 #ifndef DEBUGGING
 #define DEBUGGING(...)
@@ -23,8 +26,11 @@ const char* HOSTNAME = "ESP-RGB-SOFA";
 #ifndef DEBUGGING_L
 #define DEBUGGING_L(...)
 #endif
+#ifndef DEBUGGING_F
+#define DEBUGGING_F(...)
+#endif
 
-const char* mqtt_server = "192.168.10.219";
+const char* mqtt_server = "192.168.10.89";
 const char* mqtt_user = "shrugged";
 const char* mqtt_pass = "fucker%%";
 
@@ -32,6 +38,8 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 
 MDNSResponder mdns;
+
+WebSocketsServer webSocket = WebSocketsServer(81);
 
 // 0 to 1024
 int brightness = 1024;
@@ -53,27 +61,27 @@ String toString(byte* payload, unsigned int length) {
 }
 
 void configModeCallback (WiFiManager *myWiFiManager) {
-  Serial.println("Entered config mode");
-  Serial.println(WiFi.softAPIP());
+  DEBUGGING_L("Entered config mode");
+  DEBUGGING_L(WiFi.softAPIP());
   //if you used auto generated SSID, print it
-  Serial.println(myWiFiManager->getConfigPortalSSID());
+  DEBUGGING_L(myWiFiManager->getConfigPortalSSID());
 }
 
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
+    DEBUGGING("Attempting MQTT connection...");
     // Attempt to connect
     if (client.connect(HOSTNAME, mqtt_user, mqtt_pass)) {
-      Serial.println("connected");
+      DEBUGGING_L("connected");
       client.subscribe("home/sofa/rgb1/brightness");
       client.subscribe("home/sofa/rgb1/switch");
       client.subscribe("home/sofa/rgb1/colors");
       return;
     } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
+      DEBUGGING("failed, rc=");
+      DEBUGGING(client.state());
+      DEBUGGING_L(" try again in 5 seconds");
       // Wait 5 seconds before retrying
       delay(5000);
     }
@@ -84,6 +92,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   
   if(strcmp(topic,"home/sofa/rgb1/colors")==0){
     String msg = toString(payload, length);
+    client.publish("home/sofa/rgb1/colors_status", (const char*)payload);
     int c1 = msg.indexOf(',');
     int c2 = msg.indexOf(',',c1+1);
     
@@ -98,6 +107,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     blue = b;
   } else if (strcmp(topic,"home/sofa/rgb1/brightness")==0) {
     String msg = toString(payload, length);
+    client.publish("home/sofa/rgb1/brightness_status", (const char*)payload);
     int b = msg.toInt();
     brightness = map(b, 0, 255, 0, 1024);
   } else if (strcmp(topic,"home/sofa/rgb1/switch")==0) {
@@ -105,8 +115,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
     int s = msg.toInt();
     if(s == 1 ) {
       stats = 1;
+      client.publish("home/sofa/rgb1/status", "1");
     } else if (s == 0 ) {
       stats = 0;
+      client.publish("home/sofa/rgb1/status", "0");
     }
   }
 
@@ -140,10 +152,10 @@ void setup() {
   wifiManager.setAPCallback(configModeCallback);
 
   //wifiManager.resetSettings();
-
-  // Turn off debug output
-  wifiManager.setDebugOutput(true);
-
+  
+  #ifdef DEBUGGING
+    wifiManager.setDebugOutput(true);
+  #endif
 
   //set minimu quality of signal so it ignores AP's under that quality
   //defaults to 8%
@@ -159,14 +171,14 @@ void setup() {
   //here  "AutoConnectAP"
   //and goes into a blocking loop awaiting configuration
   if (!wifiManager.autoConnect()) {
-    Serial.println("failed to connect and hit timeout");
+    DEBUGGING("failed to connect and hit timeout");
     //reset and try again, or maybe put it to deep sleep
     ESP.reset();
     delay(1000);
   }
 
   if (!mdns.begin(HOSTNAME, WiFi.localIP())) {
-    Serial.println("Error setting up MDNS responder!");
+    DEBUGGING("Error setting up MDNS responder!");
     while (1) {
       delay(1000);
     }
@@ -184,30 +196,31 @@ void setup() {
   ArduinoOTA.setPassword((const char *)PASSWORD);
 
   ArduinoOTA.onStart([]() {
-    Serial.println("Start");
+    DEBUGGING_L("Start");
   });
   ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
+    DEBUGGING_L("\nEnd");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    DEBUGGING_F("Progress: %u%%\r", (progress / (total / 100)));
   });
   ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    DEBUGGING_F("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) DEBUGGING_L("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) DEBUGGING_L("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) DEBUGGING_L("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) DEBUGGING_L("Receive Failed");
+    else if (error == OTA_END_ERROR) DEBUGGING_L("End Failed");
   });
   
   ArduinoOTA.begin();
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
-  
+
   analogWrite(BLUE_PIN, 1023);
   analogWrite(RED_PIN, 1023);
   analogWrite(GREEN_PIN, 1023);
+  client.publish("home/sofa/rgb1/brightness_status", "1023");
   
   delay(100);
 }
