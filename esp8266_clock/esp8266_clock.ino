@@ -1,10 +1,3 @@
-/*
-   Time_NTP.pde
-   Example showing time sync to NTP time source
-
-   This sketch uses the ESP8266WiFi library
-*/
-
 #include <TimeLib.h>
 #include <WiFiManager.h>
 #include <DNSServer.h>
@@ -16,9 +9,21 @@
 #include <PubSubClient.h>
 #include <Hash.h>
 #include <LedControl.h>
+#include <Bounce2.h>
+
+#define NUM_DISPLAY 4
+#define NOTE_D5  587
+
+const int SPEAKER_PIN = D2;
+const int BUTTON_PIN = D3;
+
+Bounce pushbutton = Bounce(BUTTON_PIN, 10);  // 10 ms debounce
+
+long noteDuration = 500;
+long frequency = NOTE_D5;
 
 IPAddress timeServerIP;
-const char* ntpServerName = "us.pool.ntp.org";
+const char* ntpServerName = "ca.pool.ntp.org";
 
 //const int timeZone = 1;     // Central European Time
 const int timeZone = -4;  // Eastern Standard Time (USA)
@@ -36,13 +41,15 @@ WiFiClient espClient;
 PubSubClient client(espClient);
 MDNSResponder mdns;
 
-#define NUM_DISPLAY 4
 
 // data, clock, cs, numdevices
 //LedControl lc = LedControl(D7,D5,D6,4);
 LedControl lc = LedControl(D7, D5, D4, NUM_DISPLAY);
 
-int prev_display[NUM_DISPLAY] = {-1, -1, -1,-1 };
+int prev_display[NUM_DISPLAY] = { -1, -1, -1, -1 };
+
+boolean flicker = true;
+
 
 const int num[10][8] = {
   {0x00, 0x78, 0xcc, 0xec, 0xfc, 0xdc, 0xcc, 0x78}, // zero
@@ -70,6 +77,16 @@ const int num[10][8] = {
 #ifndef DEBUGGING_F
 #define DEBUGGING_F(...)
 #endif
+
+enum states
+{
+  SHOW_TIME,           // Displays the time and date
+  SHOW_TIME_ALARM_ON,  // Displays the time and date, and alarm is on
+  SHOW_ALARM_TIME,     // Displays the alarm time and goes back to time and date after 3 seconds
+  BUZZER_ON            // Displays the time and date, and buzzer is on (alarm time met)
+};
+
+states state;  // Holds the current state of the system
 
 void configModeCallback (WiFiManager *myWiFiManager) {
   DEBUGGING_L("Entered config mode");
@@ -152,21 +169,23 @@ void setup()
   Serial.println("Starting UDP");
   Udp.begin(localPort);
 
-  for (int i = 0; i < 4; i++)
-  {
-    lc.shutdown(i, false); // come out of powersaving
-    lc.setIntensity(i, 8); // set brightness 0-15
-    lc.clearDisplay(i);   // clear display
-  }
-
   for (int i = 0; i < NUM_DISPLAY; i++)
   {
-    drawNum(1, NUM_DISPLAY);
+    lc.shutdown(i, false); // come out of powersaving
+    lc.setIntensity(i, 15); // set brightness 0-15
+    lc.clearDisplay(i);   // clear display
+    drawNum(1, i);
   }
 
   // get a random server from the pool
   WiFi.hostByName(ntpServerName, timeServerIP);
   setSyncProvider(getNtpTime);
+
+  pinMode(SPEAKER_PIN, OUTPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  
+  state = SHOW_TIME;
+  //state = SHOW_TIME_ALARM_ON;
 }
 
 time_t prevDisplay = 0; // when the digital clock was displayed
@@ -177,12 +196,60 @@ void loop()
   ArduinoOTA.handle();
   client.loop();
 
-  if (timeStatus() != timeNotSet) {
-    if (now() > prevDisplay) { //update the display only if time has changed
-      prevDisplay = now() + 59;
-      //digitalClockDisplay();
-      displayHour();
+  if (timeStatus() != timeNotSet)
+  {
+    if (now() > prevDisplay)
+    { //update the display only if time has
+      prevDisplay = now();
+      switch (state)
+      {
+        case SHOW_TIME_ALARM_ON:
+          lc.setLed(0, 7, 7, true );
+        case SHOW_TIME:
+          displayHour();
+          break;
+        case SHOW_ALARM_TIME:
+          break;
+        case BUZZER_ON:
+          if (flicker)
+          {
+            displayHour();
+          }
+          else
+          {
+            clearDisplay();
+          }
+          playNote(SPEAKER_PIN, frequency, noteDuration);
+          break;
+      }
+      flicker = !flicker;
     }
+  }
+
+  if (pushbutton.update()) {
+    if (pushbutton.fallingEdge()) {
+      state = SHOW_TIME_ALARM_ON;
+    }
+  }
+}
+
+void clearDisplay()
+{
+  for (int i = 0; i < NUM_DISPLAY; i++)
+  {
+    prev_display[i] = -1;
+    lc.clearDisplay(i);
+  }
+}
+
+void playNote(int targetPin, long frequency, long length) {
+  long delay = 1000000 / frequency / 2;
+  long cycles = frequency * length / 1000;
+  for (long i = 0; i < cycles; i++) {
+    digitalWrite(targetPin, HIGH);
+    delayMicroseconds(delay);
+    digitalWrite(targetPin, LOW);
+    delayMicroseconds(delay);
   }
 }
 
@@ -240,12 +307,15 @@ void displayHour()
   display[0] = minute() % 10;
 
   update_antiflicker(display);
+
+  lc.setLed(2, 7, 5, flicker );
+  lc.setLed(2, 7, 3, flicker );
 }
 
 void displayDate()
 {
   int display[NUM_DISPLAY];
-  if(month() < 10)
+  if (month() < 10)
   {
     display[3] = 0;
   }
@@ -270,13 +340,13 @@ void displayDate()
 
 void update_antiflicker(int *display)
 {
-   for ( int i = 0; i < NUM_DISPLAY; i++)
+  for ( int i = 0; i < NUM_DISPLAY; i++)
   {
     if ( display[i] != prev_display[i])
     {
       lc.clearDisplay(i);
 
-      drawNum(display[i],i );
+      drawNum(display[i], i );
       prev_display[i] = display[i];
     }
   }
@@ -312,7 +382,7 @@ time_t getNtpTime()
 }
 
 // send an NTP request to the time server at the given address
-void sendNTPpacket(IPAddress &address)
+void sendNTPpacket(IPAddress & address)
 {
   // set all bytes in the buffer to 0
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
