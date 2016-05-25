@@ -9,15 +9,12 @@
 #include <PubSubClient.h>
 #include <Hash.h>
 #include <LedControl.h>
-#include <Bounce2.h>
 
 #define NUM_DISPLAY 4
 #define NOTE_D5  587
 
 const int SPEAKER_PIN = D2;
 const int BUTTON_PIN = D3;
-
-Bounce pushbutton = Bounce(BUTTON_PIN, 10);  // 10 ms debounce
 
 long noteDuration = 500;
 long frequency = NOTE_D5;
@@ -50,6 +47,8 @@ int prev_display[NUM_DISPLAY] = { -1, -1, -1, -1 };
 
 boolean flicker = true;
 
+time_t next_alarm = 0;
+time_t prevDisplay = 0; // when the digital clock was displayed
 
 const int num[10][8] = {
   {0x00, 0x78, 0xcc, 0xec, 0xfc, 0xdc, 0xcc, 0x78}, // zero
@@ -81,12 +80,52 @@ const int num[10][8] = {
 enum states
 {
   SHOW_TIME,           // Displays the time and date
-  SHOW_TIME_ALARM_ON,  // Displays the time and date, and alarm is on
-  SHOW_ALARM_TIME,     // Displays the alarm time and goes back to time and date after 3 seconds
-  BUZZER_ON            // Displays the time and date, and buzzer is on (alarm time met)
+  SHOW_ALARM_TIME,     // Displays the alarm time
+  SHOW_DATE,          // Displays the date time
+  ALARM_ON            // Displays the time and date, and buzzer is on (alarm time met)
 };
 
 states state;  // Holds the current state of the system
+
+volatile long lastDebounceTime = 0;
+const int debounceDelay = 20;
+
+void pushbutton() {
+  // Get the pin reading.
+  int reading = digitalRead(BUTTON_PIN);
+
+  // Ignore dupe readings.
+  if (reading == state) return;
+
+  boolean debounce = false;
+
+  // Check to see if the change is within a debounce delay threshold.
+  if ((millis() - lastDebounceTime) <= debounceDelay) {
+    debounce = true;
+  }
+
+  // This update to the last debounce check is necessary regardless of debounce state.
+  lastDebounceTime = millis();
+
+  // Ignore reads within a debounce delay threshold.
+  if (debounce) return;
+
+  if (state == ALARM_ON)
+  {
+    state = SHOW_TIME;
+    next_alarm += 86400;
+  }
+  else
+  {
+    if (state == SHOW_TIME)
+      state = SHOW_DATE;
+    else if (state == SHOW_DATE)
+      state = SHOW_ALARM_TIME;
+    else
+      state = SHOW_TIME;
+  }
+  Serial.println("Button pressed");
+}
 
 void configModeCallback (WiFiManager *myWiFiManager) {
   DEBUGGING_L("Entered config mode");
@@ -183,12 +222,15 @@ void setup()
 
   pinMode(SPEAKER_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-  
+
+  attachInterrupt(BUTTON_PIN, pushbutton, CHANGE);
+
   state = SHOW_TIME;
   //state = SHOW_TIME_ALARM_ON;
+
+  next_alarm = now() + 40;
 }
 
-time_t prevDisplay = 0; // when the digital clock was displayed
 
 void loop()
 {
@@ -198,19 +240,26 @@ void loop()
 
   if (timeStatus() != timeNotSet)
   {
-    if (now() > prevDisplay)
     { //update the display only if time has
-      prevDisplay = now();
       switch (state)
       {
-        case SHOW_TIME_ALARM_ON:
-          lc.setLed(0, 7, 7, true );
         case SHOW_TIME:
-          displayHour();
+          if (now() > prevDisplay)
+          {
+            displayHour();
+            prevDisplay = now();
+            flicker = !flicker;
+          }
           break;
         case SHOW_ALARM_TIME:
+          displayAlarm();
           break;
-        case BUZZER_ON:
+        case SHOW_DATE:
+          displayDate();
+          break;
+        case ALARM_ON:
+         if (now() > prevDisplay)
+          {
           if (flicker)
           {
             displayHour();
@@ -220,17 +269,21 @@ void loop()
             clearDisplay();
           }
           playNote(SPEAKER_PIN, frequency, noteDuration);
+          flicker = !flicker;
+          }
           break;
       }
-      flicker = !flicker;
+
+      if (now() >= next_alarm)
+      {
+        state = ALARM_ON;
+      }
+      else
+        lc.setLed(0, 7, 7, true );
     }
   }
 
-  if (pushbutton.update()) {
-    if (pushbutton.fallingEdge()) {
-      state = SHOW_TIME_ALARM_ON;
-    }
-  }
+
 }
 
 void clearDisplay()
@@ -252,31 +305,6 @@ void playNote(int targetPin, long frequency, long length) {
     delayMicroseconds(delay);
   }
 }
-
-void digitalClockDisplay() {
-  // digital clock display of the time
-  Serial.print(hour());
-  printDigits(minute());
-  printDigits(second());
-  Serial.print(" ");
-  Serial.print(day());
-  Serial.print(".");
-  Serial.print(month());
-  Serial.print(".");
-  Serial.print(year());
-  Serial.println();
-}
-
-
-
-void printDigits(int digits) {
-  // utility for digital clock display: prints preceding colon and leading 0
-  Serial.print(":");
-  if (digits < 10)
-    Serial.print('0');
-  Serial.print(digits);
-}
-
 
 void drawNum(int number, int display)
 {
@@ -305,6 +333,28 @@ void displayHour()
   }
 
   display[0] = minute() % 10;
+
+  update_antiflicker(display);
+
+  lc.setLed(2, 7, 5, flicker );
+  lc.setLed(2, 7, 3, flicker );
+}
+
+void displayAlarm()
+{
+  int display[NUM_DISPLAY];
+  display[3] = hour(next_alarm) / 10;
+  display[2] = hour(next_alarm) % 10;
+  if (minute(next_alarm) < 10)
+  {
+    display[1] = 0;
+  }
+  else
+  {
+    display[1] = minute(next_alarm) / 10;
+  }
+
+  display[0] = minute(next_alarm) % 10;
 
   update_antiflicker(display);
 
