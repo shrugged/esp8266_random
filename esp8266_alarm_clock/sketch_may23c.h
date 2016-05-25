@@ -6,7 +6,7 @@ const int BUTTON_PIN = D1;
 Bounce pushbutton = Bounce(BUTTON_PIN, 20);  // 10 ms debounce
 
 IPAddress timeServerIP;
-const char* ntpServerName = "us.pool.ntp.org";
+const char* ntpServerName = "ca.pool.ntp.org";
 
 //const int timeZone = 1;     // Central European Time
 const int timeZone = -4;  // Eastern Standard Time (USA)
@@ -26,17 +26,15 @@ MDNSResponder mdns;
 
 
 // data, clock, cs, numdevices
-//LedControl lc = LedControl(D7,D5,D6,4);
-LedControl lc = LedControl(D7, D5, D8, NUM_DISPLAY);
+LedControl lc = LedControl(D7, D5, D4, NUM_DISPLAY);
 
 int prev_display[NUM_DISPLAY] = { -1, -1, -1, -1 };
+int current_display[NUM_DISPLAY] = { -1, -1, -1, -1 };
 
 time_t next_alarm = 0;
 time_t prevDisplay = 0; // when the digital clock was displayed
 
 boolean alarm_dot;
-boolean alarm_flicker = true;
-boolean time_dot = true;
 
 #define DEBUGGING(...) Serial.println( __VA_ARGS__ )
 #define DEBUGGING_L(...) Serial.print( __VA_ARGS__ )
@@ -55,8 +53,7 @@ boolean time_dot = true;
 enum states
 {
   VIEW_MODE,
-  ALARM_ON,
-  ALARM_OFF
+  ALARM
 };
 
 const int num[10][8] = {
@@ -92,23 +89,4 @@ void drawNum(int number, int display)
   lc.setColumn(display, 5, num[number][5]);
   lc.setColumn(display, 6, num[number][6]);
   lc.setColumn(display, 7, num[number][7]);
-}
-
-
-void update_display(int *display)
-{
-  //update the display only if time has changed
-  for ( int i = 0; i < NUM_DISPLAY; i++)
-  {
-    if ( display[i] != prev_display[i])
-    {
-      lc.clearDisplay(i);
-
-      drawNum(display[i], i );
-      prev_display[i] = display[i];
-    }
-  }
-
-  if (alarm_dot)
-    lc.setLed(0, 7, 7, true );
 }

@@ -15,15 +15,23 @@
 #include "ntp_util.h"
 #include "sound.h"
 
-State state_time_mode(&time_mode_enter, NULL);
-State state_date_mode(&date_mode_enter, NULL);
-State state_alarm_mode(&alarm_mode_enter, NULL);
+State state_time_mode(&time_mode_enter, &time_mode, NULL);
+State state_date_mode(&date_mode_enter, &time_mode, NULL);
+State state_alarm_mode(&alarm_mode_enter, &time_mode, NULL);
+State state_text_mode(&text_mode_enter, &time_mode, NULL);
 
-State state_alarm(&alarm_enter, &alarm_exit);
+State state_alarm_on_mode(&alarm_on_enter, &alarm, NULL);
+State state_alarm_off_mode(&alarm_off_enter, &alarm, NULL);
 
-Fsm fsm(&state_date_mode);
+Fsm fsm_alarm(&state_alarm_on_mode);
+Fsm fsm_view_mode(&state_date_mode);
 
-void (*update_current)();
+#define MAX_ALARMS 10
+#define MAX_REFRESH_RATE 60 // in milliseconds
+
+unsigned long last_refresh = 0;
+
+time_t alarms[MAX_ALARMS];
 
 void configModeCallback (WiFiManager *myWiFiManager) {
   DEBUGGING_L("Entered config mode");
@@ -106,121 +114,98 @@ void setup()
   next_alarm = 1464087600 +  timeZone * SECS_PER_HOUR;
   alarm_dot = true;
 
-  fsm.add_transition(&state_time_mode, &state_date_mode, VIEW_MODE, NULL);
-  fsm.add_transition(&state_date_mode, &state_alarm_mode, VIEW_MODE, NULL);
-  fsm.add_transition(&state_alarm_mode, &state_time_mode, VIEW_MODE, NULL);
+  fsm_view_mode.add_transition(&state_time_mode, &state_date_mode, VIEW_MODE, NULL);
+  fsm_view_mode.add_transition(&state_date_mode, &state_alarm_mode, VIEW_MODE, NULL);
+  fsm_view_mode.add_transition(&state_alarm_mode, &state_time_mode, VIEW_MODE, NULL);
+  fsm_view_mode.add_transition(&state_text_mode, &state_text_mode, VIEW_MODE, NULL);
 
-  fsm.add_transition(&state_time_mode, &state_alarm, ALARM_ON, NULL);
-  fsm.add_transition(&state_date_mode, &state_alarm, ALARM_ON, NULL);
-  fsm.add_transition(&state_alarm_mode, &state_alarm, ALARM_ON, NULL);
+  fsm_alarm.add_transition(&state_alarm_on_mode, &state_alarm_off_mode, ALARM, NULL);
+  fsm_alarm.add_transition(&state_alarm_off_mode, &state_alarm_on_mode, ALARM, NULL);
 
-  fsm.add_transition(&state_alarm, &state_time_mode, ALARM_OFF, NULL);
-  fsm.add_transition(&state_alarm, &state_date_mode, ALARM_OFF, NULL);
-  fsm.add_transition(&state_alarm, &state_alarm_mode, ALARM_OFF, NULL);
-
-  update_current = &time_mode;
 }
-
 
 void time_mode_enter()
 {
-  update_current = &time_mode;
+
+}
+
+void text_mode_enter()
+{
 }
 
 void date_mode_enter()
 {
-  update_current = &date_mode;
+
 }
 
 void alarm_mode_enter()
 {
-  update_current = alarm_mode;
+
 }
 
-void alarm_enter()
+void alarm_on_enter()
 {
-  update_current = &alarm;
+
 }
 
-void alarm_exit()
+void alarm_off_enter()
 {
-  alarm_dot = false;
+
 }
 
 void time_mode()
 {
-  int display[NUM_DISPLAY];
-  display[3] = hour() / 10;
-  display[2] = hour() % 10;
+  current_display[3] = hour() / 10;
+  current_display[2] = hour() % 10;
   if (minute() < 10)
-    display[1] = 0;
+    current_display[1] = 0;
   else
-    display[1] = minute() / 10;
+    current_display[1] = minute() / 10;
 
-  display[0] = minute() % 10;
-  update_display(display);
+  current_display[0] = minute() % 10;
 
-  lc.setLed(2, 2, 5, time_dot );
-  lc.setLed(2, 2, 3, time_dot );
-
-  time_dot = !time_dot;
+  lc.setLed(2, 2, 5, true );
+  lc.setLed(2, 2, 3, true );
 }
 
 void alarm_mode()
 {
-  int display[NUM_DISPLAY];
-  display[3] = hour(next_alarm) / 10;
-  display[2] = hour(next_alarm) % 10;
+  current_display[3] = hour(next_alarm) / 10;
+  current_display[2] = hour(next_alarm) % 10;
   if (minute(next_alarm) < 10)
-    display[1] = 0;
+    current_display[1] = 0;
   else
-    display[1] = minute(next_alarm) / 10;
+    current_display[1] = minute(next_alarm) / 10;
 
-  display[0] = minute(next_alarm) % 10;
-  update_display(display);
+  current_display[0] = minute(next_alarm) % 10;
 
-  lc.setLed(2, 7, 4, true );
-  lc.setLed(2, 7, 2, true );
+  lc.setLed(2, 2, 5, true );
+  lc.setLed(2, 2, 3, true );
 }
 
 void date_mode()
 {
-  int display[NUM_DISPLAY];
   if (month() < 10)
-    display[3] = 0;
+    current_display[3] = 0;
   else
-    display[3] = month() / 10;
+    current_display[3] = month() / 10;
 
-  display[2] = month() % 10;
+  current_display[2] = month() % 10;
   if (day() < 10)
-    display[1] = 0;
+    current_display[1] = 0;
   else
-    display[1] = day() / 10;
+    current_display[1] = day() / 10;
 
-  display[0] = day() % 10;
-  update_display(display);
+  current_display[0] = day() % 10;
+}
+
+void text_mode()
+{
 }
 
 void alarm()
 {
-  if (alarm_flicker)
-  {
-    int display[NUM_DISPLAY];
-    display[3] = hour(next_alarm) / 10;
-    display[2] = hour(next_alarm) % 10;
-    if (minute() < 10)
-      display[1] = 0;
-    else
-      display[1] = minute(next_alarm) / 10;
 
-    display[0] = minute(next_alarm) % 10;
-    update_display(display);
-  }
-  else
-    clearDisplay();
-
-  alarm_flicker = !alarm_flicker;
-  //playNote(SPEAKER_PIN, frequency, noteDuration);
 }
 
 void loop()
@@ -231,27 +216,42 @@ void loop()
 
   if (pushbutton.update()) {
     if (pushbutton.risingEdge()) {
-      if (fsm.get_current_state() == &state_alarm)
+      if (fsm_alarm.get_current_state() == &state_alarm_on_mode)
       {
-        fsm.trigger(ALARM_OFF);
+        fsm_alarm.trigger(ALARM);
         next_alarm += 86400 ;
       }
       else
       {
-        fsm.trigger(VIEW_MODE);
+        fsm_view_mode.trigger(VIEW_MODE);
       }
     }
   }
 
   if (timeStatus() != timeNotSet)
   {
-    if (now() > prevDisplay)
+    if (millis() - last_refresh > MAX_REFRESH_RATE)
     {
-      //update_display();
-      (*update_current)();
-    }
+      fsm_view_mode.update();
 
-    if (now() >= next_alarm)
-      fsm.trigger(ALARM_ON);
+      //anti-flicker display
+      for ( int i = 0; i < NUM_DISPLAY; i++)
+      {
+        if ( current_display[i] != prev_display[i])
+        {
+          lc.clearDisplay(i);
+
+          drawNum(current_display[i], i );
+          prev_display[i] = current_display[i];
+        }
+      }
+
+      if (alarm_dot)
+        lc.setLed(0, 7, 7, true );
+    }
+    if (now() >= next_alarm && fsm_alarm.get_current_state() != &state_alarm_on_mode)
+      fsm_alarm.trigger(ALARM);
   }
+
+  fsm_alarm.update();
 }
