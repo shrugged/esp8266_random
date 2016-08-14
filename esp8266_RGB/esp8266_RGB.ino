@@ -9,9 +9,9 @@
 #include <WebSocketsServer.h>   //https://github.com/Links2004/arduinoWebSockets/tree/async
 #include <Hash.h>
 
-#define BLUE_PIN 14
-#define RED_PIN 12
-#define GREEN_PIN 13
+#define BLUE_PIN 5
+#define RED_PIN 6
+#define GREEN_PIN 7
  
 const char* HOSTNAME = "ESP-RGB-SOFA";
 #define PASSWORD "OMFG@@"

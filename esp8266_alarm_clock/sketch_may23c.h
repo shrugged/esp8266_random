@@ -3,8 +3,6 @@
 const int SPEAKER_PIN = D2;
 const int BUTTON_PIN = D1;
 
-Bounce pushbutton = Bounce(BUTTON_PIN, 20);  // 10 ms debounce
-
 IPAddress timeServerIP;
 const char* ntpServerName = "ca.pool.ntp.org";
 
@@ -34,7 +32,7 @@ int current_display[NUM_DISPLAY] = { -1, -1, -1, -1 };
 time_t next_alarm = 0;
 time_t prevDisplay = 0; // when the digital clock was displayed
 
-boolean alarm_dot;
+boolean alarm_enable_dot;
 
 #define DEBUGGING(...) Serial.println( __VA_ARGS__ )
 #define DEBUGGING_L(...) Serial.print( __VA_ARGS__ )
@@ -53,7 +51,8 @@ boolean alarm_dot;
 enum states
 {
   VIEW_MODE,
-  ALARM
+  ALARM,
+  ALARM_EDIT
 };
 
 const int num[10][8] = {
